@@ -1,0 +1,63 @@
+panel: 20 countries, 12 variables, 1954-2025; 30 models x 36 origins
+  [ 1/30] Panel AR(1) + country FE            14418 forecasts, 0 failed origins,    20s
+  [ 2/30] Panel AR(2) + country FE            14322 forecasts, 0 failed origins,    21s
+  [ 3/30] Panel AR(3) + country FE            14218 forecasts, 0 failed origins,    21s
+  [ 4/30] Panel AR(1), 20y window             14418 forecasts, 0 failed origins,    21s
+  [ 5/30] Ridge L1, real block                13368 forecasts, 1 failed origins,    11s
+  [ 6/30] Panel AR(2), 20y window             14322 forecasts, 0 failed origins,    21s
+  [ 7/30] Ridge L3, real block                12470 forecasts, 3 failed origins,    11s
+  [ 8/30] Ridge L1 a10, financial block       10434 forecasts, 5 failed origins,    12s
+  [ 9/30] Ridge L1, full block                 6568 forecasts, 7 failed origins,    14s
+  [10/30] Ridge L1, real, 20y window          13368 forecasts, 1 failed origins,    11s
+  [11/30] LASSO L1, own lags only             13706 forecasts, 0 failed origins,     8s
+  [12/30] LASSO L1, curated inputs            11272 forecasts, 0 failed origins,    13s
+  [13/30] LASSO L1 a0.1, all inputs            7056 forecasts, 0 failed origins,    19s
+  [14/30] LASSO curated + global factors      11272 forecasts, 0 failed origins,    35s
+  [15/30] LASSO L3 curated + US factors       10784 forecasts, 0 failed origins,    37s
+  [16/30] Random forest L1, depth 5           11304 forecasts, 0 failed origins,   224s
+  [17/30] Random forest L3, depth 5           10956 forecasts, 0 failed origins,   222s
+  [18/30] Random forest L1 all, depth 10       6822 forecasts, 0 failed origins,   160s
+  [19/30] Panel PCA K=1, curated               9386 forecasts, 0 failed origins,    14s
+  [20/30] Panel PCA K=2, curated               9386 forecasts, 0 failed origins,    14s
+  [21/30] Panel PCA K=1, all                  11306 forecasts, 0 failed origins,    16s
+  [22/30] Panel PCA K=1 + global agg.          9386 forecasts, 0 failed origins,    22s
+  [23/30] Random forest L1, 20y window        11304 forecasts, 0 failed origins,   228s
+  [24/30] DFM K=1, core block                  6056 forecasts, 0 failed origins,     6s
+  [25/30] Panel PCA K=1, 20y window           10814 forecasts, 0 failed origins,    14s
+  [26/30] DFM K=1 + global agg.                6056 forecasts, 0 failed origins,    11s
+  [27/30] DFM K=2, all                        10968 forecasts, 0 failed origins,    11s
+  [28/30] Country PCA K=1, direct             13855 forecasts, 0 failed origins,    66s
+  [29/30] Country PCA screened + region       13855 forecasts, 0 failed origins,   100s
+  [30/30] Country PCA K=2 all, iterated       13802 forecasts, 0 failed origins,    83s
+                         model  RMSE   MAE  MAPE  TheilU    DA      n
+       Panel AR(2), 20y window 2.204 1.426 3.899   0.975 0.664 2069.0
+ Ridge L1 a10, financial block 2.260 1.477 4.493   0.996 0.653 1887.0
+       No-change (random walk) 3.511 2.764 6.264   1.000   NaN 2070.0
+     Random forest L3, depth 5 2.680 1.622 4.252   1.001 0.662 1825.0
+      Panel AR(2) + country FE 3.497 2.226 3.618   1.005 0.666 2069.0
+      Panel AR(3) + country FE 3.424 2.135 3.730   1.007 0.667 2068.0
+          Ridge L1, real block 3.144 1.960 4.271   1.010 0.631 2063.0
+     Random forest L1, depth 5 2.749 1.811 3.672   1.015 0.652 1827.0
+      Panel AR(1) + country FE 3.531 2.231 3.488   1.017 0.659 2070.0
+    Ridge L1, real, 20y window 2.180 1.396 3.885   1.020 0.660 2063.0
+          Ridge L3, real block 2.608 1.713 4.510   1.020 0.646 2061.0
+  Random forest L1, 20y window 2.780 1.815 4.198   1.021 0.645 1827.0
+Random forest L1 all, depth 10 2.855 1.788 4.431   1.023 0.643 1387.0
+       LASSO L1, own lags only 3.491 2.248 4.119   1.027 0.663 2063.0
+     LASSO L1 a0.1, all inputs 2.531 1.522 4.354   1.028 0.648 1387.0
+           DFM K=1, core block 3.242 1.928 4.235   1.030 0.735  928.0
+         DFM K=1 + global agg. 3.686 1.980 4.059   1.031 0.730  928.0
+     Panel PCA K=1, 20y window 1.989 1.317 3.759   1.031 0.665 1668.0
+          Ridge L1, full block 2.475 1.484 3.146   1.033 0.647 1387.0
+        Panel PCA K=2, curated 4.297 2.357 5.045   1.038 0.722 1397.0
+       Panel AR(1), 20y window 2.158 1.364 3.904   1.045 0.658 2070.0
+        Panel PCA K=1, curated 3.783 2.204 5.459   1.048 0.703 1397.0
+LASSO curated + global factors 2.138 1.347 3.965   1.050 0.652 1827.0
+            Panel PCA K=1, all 3.551 2.138 3.986   1.054 0.659 1776.0
+                  DFM K=2, all 4.109 2.273 5.292   1.062 0.677 1672.0
+ LASSO L3 curated + US factors 2.138 1.412 3.892   1.092 0.665 1825.0
+ Country PCA screened + region 3.842 2.302 4.118   1.094 0.651 2059.0
+      LASSO L1, curated inputs 2.147 1.426 4.116   1.100 0.659 1827.0
+ Country PCA K=2 all, iterated 3.580 2.211 3.816   1.135 0.653 2057.0
+       Country PCA K=1, direct 5.233 2.603 4.121   1.135 0.652 2059.0
+   Panel PCA K=1 + global agg. 5.600 2.667 5.349   1.390 0.678 1397.0
