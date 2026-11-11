@@ -11,7 +11,7 @@ python evaluate_models.py           # full run (~30 min on 2 cores); downloads d
 python evaluate_models.py --quick   # 3 origins per sample, smoke test
 ```
 
-Open `results/leaderboard.html` in a browser.
+Open `(https://verjokiel.github.io/Leaderboard/)` in a browser.
 
 ## What it does
 
