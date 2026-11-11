@@ -11,22 +11,7 @@ python evaluate_models.py           # full run (~30 min on 2 cores); downloads d
 python evaluate_models.py --quick   # 3 origins per sample, smoke test
 ```
 
-Open `results/leaderboard.html` in a browser.
-
-## What it does
-
-| Step | Detail |
-|---|---|
-| Data | `support/fetch_data.py`: World Bank WDI (CPI, inflation, real GDP, M2, USD FX, current account, nominal GDP), IMF WEO (unemployment, government debt), FRED (OECD 3-month and 10-year rates, BIS REER). 20 countries, from 1960 where available, cached in `data_cache/`. |
-| Same sample | Every model gets the same panel and the same origins, re-estimated at each origin with data ≤ origin only. |
-| In-sample | origins 1990–2014, forecasts h = 1, 2 |
-| Out-of-sample | origins 2015–2024, scored against outturns up to the **2025 cut-off** |
-| Final forecast | fitted on all data to 2025 → `results/final_forecasts.csv` (2026, 2027) |
-| Measures | RMSE, MAE, MAPE, Theil U2 (vs no-change), directional accuracy |
-| Transformations | FRED-MD codes in `support/var_classification.py` (5 = log diff for price, GDP, money, FX; 2 = diff for rates, unemployment, debt; 1 = level for inflation, current account) |
-
-Outputs in `results/`: `forecasts.csv`, `forecast_errors.csv`, `scores.csv`, `model_run_log.csv`,
-`final_forecasts.csv`, `leaderboard.html`.
+Open `[results/leaderboard.html](https://verjokiel.github.io/Leaderboard/)` in a browser.
 
 ## Notes (11.11.2026)
 
