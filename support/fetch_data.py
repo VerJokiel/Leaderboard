@@ -45,7 +45,8 @@ def _get(url: str, tries: int = 3) -> bytes:
             if i == tries - 1:
                 raise
             time.sleep(2 * (i + 1))
-
+          
+# Worldbank data
 
 def world_bank(last_year: int) -> pd.DataFrame:
     isos = ";".join(COUNTRIES)
@@ -59,6 +60,7 @@ def world_bank(last_year: int) -> pd.DataFrame:
                 rows.append((d["countryiso3code"], var, int(d["date"]), float(d["value"])))
     return pd.DataFrame(rows, columns=["ISO3", "variable", "year", "value"])
 
+# IMF data
 
 def imf_weo(last_year: int) -> pd.DataFrame:
     rows = []
@@ -71,6 +73,7 @@ def imf_weo(last_year: int) -> pd.DataFrame:
                     rows.append((iso, var, int(y), float(v)))
     return pd.DataFrame(rows, columns=["ISO3", "variable", "year", "value"])
 
+# Fred data
 
 def fred(last_year: int) -> pd.DataFrame:
     rows = []
