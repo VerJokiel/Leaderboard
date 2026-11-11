@@ -1,7 +1,7 @@
 # Leaderboard
 
-Leaderboard for chosen models: 30 specifications from the model files in this repo, evaluated on
-one panel with five error measures and shown in an interactive HTML matrix (pick 3 of 30).
+Leaderboard for chosen models: 30 specifications from the model files in this repo (currently 16), evaluated on
+one panel with five error measures and shown in an interactive HTML matrix.
 
 ## Run
 
