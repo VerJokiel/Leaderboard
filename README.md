@@ -23,11 +23,11 @@ Open `(https://verjokiel.github.io/Leaderboard/)` in a browser.
 | Out-of-sample | origins 2015–2024, scored against outturns up to the **2025 cut-off** |
 | Final forecast | fitted on all data to 2025 → `results/final_forecasts.csv` (2026, 2027) |
 | Measures | 
-RMSE,
+| RMSE,|
 MAE, 
 MAPE, 
 Theil U2 (vs no-change), 
-directional accuracy (how often a forecast correctly predicts the direction of change—up or down—rather than the magnitude, with common metrics including Mean Directional Accuracy (MDA)) |
+directional accuracy: how often a forecast correctly predicts the direction of change—up or down—rather than the magnitude, with common metrics including Mean Directional Accuracy (MDA)) |
 | Transformations | FRED-MD codes in `support/var_classification.py` (5 = log diff for price, GDP, money, FX; 2 = diff for rates, unemployment, debt; 1 = level for inflation, current account) |
 
 Outputs in `results/`: `forecasts.csv`, `forecast_errors.csv`, `scores.csv`, `model_run_log.csv`,
