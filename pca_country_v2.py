@@ -258,8 +258,78 @@ class PCACountryV3:
         self.fit_report: dict = {}
         self.fit_status = "not fitted"
 
-  
-       # ------------------------------------------------------------ building blocks
+    # ------------------------------------------------------------ data prep
+    def _prepare_series(self, panel: pd.DataFrame, cutoff_year: int):
+        """Transformed series per (ISO3, variable), indexed by year.
+        Returns ({key: Series}, {key: (ctx, last_observed_year)})."""
+        p = panel[panel["year"] <= cutoff_year]
+        if self.train_window_years is not None:
+            p = p[p["year"] > cutoff_year - self.train_window_years]
+        p = p.dropna(subset=["value"])
+        series, ctx = {}, {}
+        for (iso, v), g in p.groupby(["ISO3", "variable"], observed=True, sort=False):
+            if family(v) == "skip":
+                continue
+            g = g.drop_duplicates("year", keep="last").sort_values("year")
+            yrs = g["year"].astype(int).to_numpy()
+            vals = g["value"].astype(float).to_numpy()
+            gaps = np.where(np.diff(yrs) != 1)[0]
+            if len(gaps):                              # keep the latest consecutive run
+                yrs, vals = yrs[gaps[-1] + 1:], vals[gaps[-1] + 1:]
+            if len(vals) < 3:
+                continue
+            t, c = _forward(vals, transformation(v))
+            t = np.asarray(t, float)
+            bad = np.where(~np.isfinite(t))[0]
+            if len(bad):                               # e.g. log of a non-positive value
+                t = t[bad[-1] + 1:]
+            if len(t) < 3:
+                continue
+            series[(iso, v)] = pd.Series(t, index=yrs[-len(t):])
+            ctx[(iso, v)] = (c, int(yrs[-1]))
+        return series, ctx
+
+    def _prepare_aggregates(self, panel: pd.DataFrame, cutoff_year: int) -> pd.DataFrame:
+        if self.factor_aug == "none":
+            return pd.DataFrame()
+        past = panel[panel["year"] <= cutoff_year]
+        df = _precompute_factors(past, cutoff_year,
+                                 variables=list(all_macro_inputs()) + ["nGDP_USD"],
+                                 regions=self.regions)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.copy()
+        df.index = df.index.astype(int)
+        df = df[df.index <= cutoff_year]
+        if self.train_window_years is not None:
+            df = df[df.index > cutoff_year - self.train_window_years]
+        return df
+
+    def _candidate_list(self, target: str) -> list[str]:
+        pool = all_macro_inputs() if self.input_mode == "all" else resolve_inputs(target, "curated")
+        return [v for v in dict.fromkeys(pool) if v != target and family(v) != "skip"]
+
+    def _aggregate_for(self, iso: str, target: str, aggs: pd.DataFrame):
+        """The aggregate series of the target variable for this country, or (None, reason)."""
+        kind = _FACTOR_AUG_KIND[self.factor_aug]
+        if kind is None:
+            return None, None
+        if aggs.empty:
+            return None, "no aggregates computed"
+        cols = [c for c in feature_columns(aggs, kind) if c.endswith(f"_{target}")]
+        if kind.startswith("region"):
+            region = self.regions.get(iso)
+            if region is None:
+                return None, "no region mapping for country"
+            cols = [c for c in cols if f"_{region}_" in c]
+        elif f"{kind}_{target}" in cols:
+            cols = [f"{kind}_{target}"]
+        if len(cols) != 1:
+            return None, f"{len(cols)} matching aggregate columns"
+        s = aggs[cols[0]].replace([np.inf, -np.inf], np.nan).dropna()
+        return (s if len(s) else None), (None if len(s) else "aggregate empty")
+
+    # ------------------------------------------------------------ building blocks
     def _screen(self, y: pd.Series, cands: dict[str, pd.Series]) -> list[str]:
         """Targeted predictors: |t| of x_t in y_{t+1} = a + rho*y_t + b*x_t + e."""
         if not self.tstat_screen:
@@ -322,8 +392,7 @@ class PCACountryV3:
             return float(np.sign(a) * _MAX_AR)
         return float(a)
 
-  
-# ------------------------------------------------------------ main API
+    # ------------------------------------------------------------ main API
     def fit(self, panel: pd.DataFrame, cutoff_year: int) -> None:
         self.cutoff_year = int(cutoff_year)
         self._models = {}

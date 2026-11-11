@@ -56,6 +56,7 @@ Design:
 
 from __future__ import annotations
 import itertools
+import logging
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -78,17 +79,17 @@ _FACTOR_AUG_KIND = {
     "region_eq":  "region_avg",
     "region_gdp": "region_wavg",
     "global_eq":  "global_avg",
-    "global_gdp": "global_wavg",   }
+    "global_gdp": "global_wavg",
+}
 
 _OUT_COLS = ["ISO3", "year", "variable", "horizon", "point", "lower", "upper"]
 
 def _em_pca(Z: np.ndarray, K: int, n_iter: int = 100, tol: float = 1e-6):
-
-  """PCA on a standardised matrix with NaNs (EM algorithm).
+    """PCA on a standardised matrix with NaNs (EM algorithm).
     Missing cells start at 0 (the column mean after standardising) and are
     replaced by the rank-K fit until convergence. Observed cells stay fixed.
     Returns factors F (T x K) and loadings L (N x K).
-  """
+    """
     mask = np.isnan(Z)
     X = np.where(mask, 0.0, Z)
     F = L = None
@@ -118,11 +119,12 @@ class PanelPCAv2:
         "train_window_years": [None, 50, 20, 10],
     }
 
-  def __init__(
+    def __init__(
         self,
         input_mode: str = "curated",
         factor_aug: str = "none",
         K: int = 1,
+        tstat_screen: bool = False,
         train_window_years: int | None = None,
         min_cells_per_year: int | float = 0.5,
         min_col_coverage: float = 0.5,
@@ -169,13 +171,14 @@ class PanelPCAv2:
         self.fit_status = "not fitted"
 
     # ---- helpers ----
-   def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str) -> None:
         self._state = None
         self.fit_status = reason
         log.warning("%s: no forecasts (%s)", self.name, reason) # if forecast was unsuccessful 
 
-    """OLS AR(p) with intercept → (intercept, coefs, residual sd) or None."""
+    @staticmethod
     def _ar_fit(y, p: int = 1):
+        """OLS AR(p) with intercept → (intercept, coefs, residual sd) or None."""
         y = np.asarray(y, float)
         if len(y) < p + 3:
             return None
@@ -196,8 +199,9 @@ class PanelPCAv2:
             out.append(y_hat); lags = [y_hat] + lags[:-1]
         return out
 
-        """Simulated AR(1) paths, shape (n_sims, n)."""
+    @staticmethod
     def _ar_sim(intercept, ar_coef, init, n, sigma, rng, n_sims):
+        """Simulated AR(1) paths, shape (n_sims, n)."""
         out = np.empty((n_sims, n))
         lag = np.full(n_sims, float(init[0]))
         a = float(ar_coef[0]) if len(ar_coef) else 0.0
@@ -207,14 +211,6 @@ class PanelPCAv2:
         return out
 
     def _variable_set(self, panel: pd.DataFrame) -> list[str]:
-        if self.input_mode == "curated":
-            block = _CURATED_BLOCK
-        else:
-            block = all_macro_inputs()
-        present = set(panel["variable"].unique())
-        return [v for v in block if v in present and family(v) != "skip"]
-
- def _variable_set(self, panel: pd.DataFrame) -> list[str]:
         block = _CURATED_BLOCK if self.input_mode == "curated" else all_macro_inputs()
         present = set(panel["variable"].unique())
         return [v for v in block if v in present and family(v) != "skip"]
@@ -233,10 +229,10 @@ class PanelPCAv2:
     def fit(self, panel: pd.DataFrame, cutoff_year: int) -> None:
         self._state = None
         variables_in = self._variable_set(panel)
-       if not variables_in:
+        if not variables_in:
             return self._fail("none of the input variables is in the panel")
-                   
- # Only information available at the cutoff (no look-ahead).
+
+        # Only information available at the cutoff (no look-ahead).
         past = panel[panel["year"] <= cutoff_year]
         sub = past[past["variable"].isin(variables_in)]
         if self.train_window_years is not None:
@@ -261,7 +257,7 @@ class PanelPCAv2:
             t_cols[(iso, v)] = pd.Series(tvals, index=yrs[-len(tvals):])
             ctx_per_pair[(iso, v)] = ctx
         if len(t_cols) < self.min_cols:
-          return self._fail(f"{len(t_cols)} usable series, need {self.min_cols}")
+            return self._fail(f"{len(t_cols)} usable series, need {self.min_cols}")
                     
         wide = pd.concat(t_cols, axis=1).sort_index()
         thr = self.min_cells_per_year
@@ -270,12 +266,12 @@ class PanelPCAv2:
         wide = wide.loc[wide.notna().sum(axis=1) >= thr]
         wide = wide.loc[:, wide.notna().mean(axis=0) >= self.min_col_coverage]
         if len(wide) < self.min_history:
-          return self._fail(f"{len(wide)} years with >= {thr} observed cells, "
+            return self._fail(f"{len(wide)} years with >= {thr} observed cells, "
                               f"need {self.min_history}")
         if wide.shape[1] < self.min_cols:
             return self._fail(f"{wide.shape[1]} columns after filters, need {self.min_cols}")       
 
-           # Standardise + EM-PCA.
+        # Standardise + EM-PCA.
         col_means = wide.mean(axis=0)
         col_sd = wide.std(axis=0, ddof=0).fillna(1.0).replace(0.0, 1.0)
         Z = ((wide - col_means) / col_sd).values
@@ -290,14 +286,14 @@ class PanelPCAv2:
         for k in range(K_eff):
             res = self._ar_fit(F[:, k], 1)
             if res is None:
-                factor_models.append((float(F[:, k].mean()), np.zeros(1)))
+                factor_models.append((float(F[:, k].mean()), np.zeros(1), float(F[:, k].std())))
             else:
                 factor_models.append(res)
                         
-             common = pd.DataFrame(F @ L.T, index=wide.index, columns=wide.columns) * col_sd
+        common = pd.DataFrame(F @ L.T, index=wide.index, columns=wide.columns) * col_sd
         e_wide = wide - col_means - common          # residuals in original units
 
-                idio_models, last_idio = {}, {}
+        idio_models, last_idio = {}, {}
         for key in col_keys:
             e = e_wide[key].dropna()
             idio_models[key] = self._ar_fit(e.values, 1) if len(e) >= 5 else None
@@ -349,6 +345,7 @@ class PanelPCAv2:
             "K": K_eff,
             "col_keys": col_keys,
             "col_means": col_means.to_dict(),
+            "col_sd": col_sd.to_dict(),
             "loadings": {k: L[j, :] for j, k in enumerate(col_keys)},
             "factor_models": factor_models,
             "F_by_year": pd.DataFrame(F, index=wide.index),
@@ -364,7 +361,7 @@ class PanelPCAv2:
         }
         self.fit_status = "ok"
 
- def predict(self, panel: pd.DataFrame, cutoff_year: int,
+    def predict(self, panel: pd.DataFrame, cutoff_year: int,
                 horizons: list[int]) -> pd.DataFrame:
         if self._state is None:
             return pd.DataFrame(columns=_OUT_COLS)

@@ -32,6 +32,7 @@ Hyperparameters PARAM_GRID:
 
 from __future__ import annotations
 import itertools
+import logging
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
@@ -132,12 +133,12 @@ class PanelRidgeMultivar:
                 if v == var_target:
                     continue
                     
-        # Forward fill or drop missing in aux series to avoid total row dropping
+                # Forward fill missing in aux series to avoid total row dropping
                 aux_vals = g[v].ffill().values 
                 if len(aux_vals) == 0 or np.isnan(aux_vals).all():
                     valid_iso = False
                     break
-                t_arr, _ = _forward(g[v].values, transformation(v))
+                t_arr, _ = _forward(aux_vals, transformation(v))
                 aux_t[v] = t_arr
 
             if not valid_iso:
@@ -161,6 +162,8 @@ class PanelRidgeMultivar:
                     if v == var_target:
                         continue
                     feat.extend(aux_t[v][t - self.L:t][::-1])
+                if not (np.all(np.isfinite(feat)) and np.isfinite(t_target_arr[t])):
+                    continue
                 x_rows.append([idx] + feat)
                 y_rows.append(t_target_arr[t])
 
@@ -171,6 +174,7 @@ class PanelRidgeMultivar:
                 "aux_lags": {v: aux_t[v][-self.L:][::-1].tolist()
                               for v in self.aux_block if v != var_target},
                 "ctx_target": ctx_target,
+                "last_year": int(g.index.get_level_values("year")[-1]),
             }
 
         if not x_rows:
@@ -193,7 +197,7 @@ class PanelRidgeMultivar:
         for var in panel["variable"].unique():
             if family(var) == "skip":
                 continue
-            built = self._build_pooled(panel, var)
+            built = self._build_pooled(panel, var, cutoff_year)
             X, y, iso_idx, per_iso_last = built
             if X is None:
                 continue
@@ -219,12 +223,15 @@ class PanelRidgeMultivar:
             iso_idx = mdef["iso_idx"]
             for iso, idx in iso_idx.items():
                 state = mdef["last"][iso]
+                offset = cutoff_year - state["last_year"]   # ragged edge
+                if offset > 3:
+                    continue
                 target_lags = list(state["target_lags"])  # [t-1, t-2, ...]
                 aux_lags = {k: list(v) for k, v in state["aux_lags"].items()}
                 ctx_target = state["ctx_target"]
                 t_steps = []
 
-                for _h in range(h_max):
+                for _h in range(h_max + offset):
                     onehot = np.zeros(n_iso)
                     onehot[idx] = 1.0
                     feat = list(target_lags)
@@ -240,7 +247,7 @@ class PanelRidgeMultivar:
                     # Aux lags: hold at last observed (conditional forecast)
                 level_steps = _inverse(t_steps, ctx_target, mode=transformation(var))
                 for h in horizons:
-                    yhat = level_steps[h - 1]
+                    yhat = level_steps[h - 1 + offset]
                     if np.isfinite(yhat):
                         rows.append((iso, cutoff_year + h, var, h, float(yhat),
                                      float("nan"), float("nan")))

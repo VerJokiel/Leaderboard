@@ -73,7 +73,8 @@ class PanelAR:
         self._last_t: dict[tuple[str, str], list[float]] = {}  # last p transformed obs
         self._ctx: dict[tuple[str, str], dict] = {}             # transformation ctx
 
-         # 1. Enforce cutoff_year globally to prevent data leakage
+        self._last_year: dict[tuple[str, str], int] = {}
+        # 1. Enforce cutoff_year globally to prevent data leakage
         panel = panel[panel["year"] <= cutoff_year]
 
         for var, dfv in panel.groupby("variable", observed=True):
@@ -83,47 +84,35 @@ class PanelAR:
             tmode = transformation(var)
             dfv = dfv.sort_values(["ISO3", "year"])
 
-            rows = []  
-               for iso, g in dfv.groupby("ISO3", observed=True):
-                g_sub = g
-            # 2. Implement train_window_years filter per country
+            rows = []
+            for iso, g in dfv.groupby("ISO3", observed=True):
+                g_sub = g.dropna(subset=["value"])
+                # 2. Optional rolling training window
                 if self.train_window_years is not None:
-                    min_yr = cutoff_year - self.train_window_years + 1
-                    g_sub = g[g["year"] >= min_yr]
-
+                    g_sub = g_sub[g_sub["year"] > cutoff_year - self.train_window_years]
                 if len(g_sub) < self.p + 3:
                     continue
+                vals = g_sub["value"].astype(float).values
+                years_arr = g_sub["year"].astype(int).values
 
-                vals = g_sub["value"].dropna().astype(float).values
-                years = g_sub["value"].dropna().index # fallback holder
-                # Extract actual years corresponding to valid values
-                valid_idx = g_sub["value"].dropna().index
-                years_arr = g_sub.loc[valid_idx, "year"].values
-
-                if len(vals) < self.p + 3:
-                    continue
-                    
-                # Transform per-country
+                # Transform per country; forward() may trim leading elements
                 tvals, ctx = _forward(vals, tmode)
+                tvals = np.asarray(tvals, dtype=float)
                 if len(tvals) < self.p + 2:
                     continue
-
-                # Align years with transformed array (forward transform may trim elements)
                 years_aligned = years_arr[-len(tvals):]
-                   
                 for t in range(self.p, len(tvals)):
-                     year_val = int(years_aligned[t])
-                    row_data = [iso, year_val, tvals[t]] + [tvals[t - k] for k in range(1, self.p + 1)]
-                    rows.append(row_data)
-                   
-                # Store last p transformed values (most recent first) + ctx
+                    rows.append([iso, int(years_aligned[t]), tvals[t]]
+                                + [tvals[t - k] for k in range(1, self.p + 1)])
+                # Last p transformed values (most recent first) + ctx
                 self._last_t[(iso, var)] = tvals[-self.p:][::-1].tolist()
                 self._ctx[(iso, var)] = ctx
+                self._last_year[(iso, var)] = int(years_arr[-1])
 
             if not rows:
                 continue
             lag_cols = [f"l{k}" for k in range(1, self.p + 1)]
-            df = pd.DataFrame(rows, columns=["ISO3", "t", "y"] + lag_cols)
+            df = pd.DataFrame(rows, columns=["ISO3", "year", "y"] + lag_cols)
     
             # Drop duplicates on MultiIndex just in case of overlapping data
             df = df.drop_duplicates(subset=["ISO3", "year"]).set_index(["ISO3", "year"])
@@ -158,16 +147,19 @@ class PanelAR:
             # Iterate in transformed space
             t_steps: list[float] = []
             lags = list(last_t)  # [t-1, t-2, ..., t-p]  in transformed space
-            for _h in range(h_max):
+            offset = cutoff_year - self._last_year[(iso, var)]   # ragged edge
+            if offset > 3:
+                continue                                          # too stale
+            for _h in range(h_max + offset):
                 t_hat = alpha + float(np.dot(beta, lags))
                 t_steps.append(t_hat)
                 lags = [t_hat] + lags[:-1]
             # Back-transform to original scale
             level_steps = _inverse(t_steps, self._ctx[(iso, var)], mode=tmode)
             for h in horizons:
-                if h - 1 >= len(level_steps):
+                if h - 1 + offset >= len(level_steps):
                     continue
-                yhat = level_steps[h - 1]
+                yhat = level_steps[h - 1 + offset]
                 if np.isfinite(yhat):
                     rows.append((iso, cutoff_year + h, var, h, float(yhat),
                                  float("nan"), float("nan")))
