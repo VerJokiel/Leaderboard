@@ -66,6 +66,7 @@ McCracken, M. & Ng, S. (2016). FRED-MD. JBES 34(4)  [transformation codes].
 
 from __future__ import annotations
 import itertools
+import logging
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -76,6 +77,8 @@ from transformations import forward as _forward, inverse as _inverse
 from input_registry import all_macro_inputs
 from global_features import precompute as _precompute_factors, feature_columns
 
+
+log = logging.getLogger(__name__)
 
 _CURATED_BLOCK = ("rGDP", "CPI", "strate", "USDfx", "unemp")
 
@@ -152,7 +155,7 @@ class MultivarDFMv2:
         if tstat_screen:
             raise NotImplementedError("tstat_screen is not supported for the panel-wide DFM")
             
-      self.input_mode = input_mode
+        self.input_mode = input_mode
         self.factor_aug = factor_aug
         self.K = int(K)
         self.tstat_screen = False
@@ -207,11 +210,11 @@ class MultivarDFMv2:
             log.warning("%s: no variables of the block present", self.name)
             return
         panel_c = self._restrict(panel, cutoff_year)
-        sub = panel[panel["variable"].isin(block)]
+        sub = panel_c[panel_c["variable"].isin(block)]   # data <= cutoff only
         if sub.empty:
             return
 
-      # 1) transform each cell
+        # 1) transform each cell
         t_cols, ctx = {}, {}
         for (iso, v), g in sub.groupby(["ISO3", "variable"], observed=True):
             g = g.dropna(subset=["value"]).sort_values("year")
@@ -255,12 +258,10 @@ class MultivarDFMv2:
         # 4) Factor dynamics AR(1)
         factor_models = []
         for k in range(K_eff):
-            res = self._ar_fit(F[:, k], 1)
-            if res is None:
-                factor_models.append((float(F[:, k].mean()), np.zeros(1)))
-            else:
-                factor_models.append(res)
-                        # 5) aggregate factors (optional)
+            res = _ols_ar1(F[:, k], max_root=self.max_ar_root)
+            factor_models.append(res[:2] if res else (0.0, 0.0))
+
+        # 5) aggregate factors (optional)
         agg_by_var: dict[str, pd.Series] = {}
         agg_models: dict[str, tuple[float, float]] = {}
         if self.factor_aug != "none":
@@ -280,7 +281,7 @@ class MultivarDFMv2:
                     agg_by_var[v] = s
                     agg_models[v] = res[:2]
                     
-       # 6) idiosyncratic AR(1) / ARX(1) per cell (on contiguous years)
+        # 6) idiosyncratic AR(1) / ARX(1) per cell (on contiguous years)
         idio = {}
         for key in wide.columns:
             e = e_wide[key].dropna()
@@ -311,7 +312,7 @@ class MultivarDFMv2:
                 horizons: list[int]) -> pd.DataFrame:
         st = self._state
         if self._state is None:
-        return pd.DataFrame(columns=_OUT_COLS)
+            return pd.DataFrame(columns=_OUT_COLS)
         cutoff_year = int(cutoff_year)
         h_max = int(max(horizons))
         T_end = int(st["years"][-1])
@@ -344,7 +345,7 @@ class MultivarDFMv2:
             if key not in st["ctx"]:
                 continue
             last_obs = st["obs_last"][key]
-            if last_obs > cutoff_year:
+            if last_obs > cutoff_year or cutoff_year - last_obs > 3:
                 continue
             years = range(last_obs + 1, last_target + 1)
             mu, sd, lam = st["mu"][key], st["sd"][key], st["L"][key]
@@ -373,7 +374,6 @@ class MultivarDFMv2:
                 if np.isfinite(yhat):
                     rows.append((iso, cutoff_year + h, var, h, yhat, np.nan, np.nan))
         return pd.DataFrame(rows, columns=_OUT_COLS)
-        )
 
 
 def model_instances() -> list[MultivarDFMv2]:

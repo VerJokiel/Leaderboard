@@ -61,6 +61,8 @@ from global_features import precompute as _precompute_factors, feature_columns
 # Number of principal components extracted from the raw factor block.
 # 3 is the standard FAVAR default (Bernanke-Boivin-Eliasz 2005).
 PCA_K = 3
+import logging
+log = logging.getLogger(__name__)
 
 
 class PanelLassoTargeted:
@@ -96,7 +98,7 @@ class PanelLassoTargeted:
             f"panel_lasso_L{self.L}_a{self.alpha:g}"
             f"_in_{self.input_mode}_fac_{self.factor_mode}{win_tag}"
         )
-               self.inputs = (
+        self.inputs = (
             f"Per target variable v_target: features = [country FE dummies | "
             f"T_target lags 1..{self.L} | T_v lags 1..{self.L} for each v in "
             f"resolved_inputs({self.input_mode}) | PC_1..PC_{PCA_K} of factors]. "
@@ -124,7 +126,7 @@ class PanelLassoTargeted:
         self._pca_imputer: SimpleImputer | None = None
         self._pca: PCA | None = None
 
-         # 1. Enforce cutoff_year on panel to prevent data leakage globally
+        # 1. Enforce cutoff_year on panel to prevent data leakage globally
         panel = panel[panel["year"] <= cutoff_year]
 
         # Precompute global / regional factors once (if needed)
@@ -157,14 +159,14 @@ class PanelLassoTargeted:
     def _fit_one(self, panel: pd.DataFrame, target: str, cutoff_year: int) -> None:
         #2. Implement train_window_years filter per target
         target_panel = panel
-         if self.train_window_years is not None:
+        if self.train_window_years is not None:
             min_allowed_year = cutoff_year - self.train_window_years + 1
             target_panel = panel[panel["year"] >= min_allowed_year]
 
         t_target = transformation(target)
         aux_vars = list(resolve_inputs(target, self.input_mode))
         relevant_vars = [target] + [v for v in aux_vars if v != target]
-        sub = panel[panel["variable"].isin(relevant_vars)]
+        sub = target_panel[target_panel["variable"].isin(relevant_vars)]
         if sub.empty:
             return
 
@@ -212,15 +214,15 @@ class PanelLassoTargeted:
             years = g.index.get_level_values("year").values
             years_aligned = years[-min_len:]
 
-            mu = float(np.mean(t_target_arr))
-            sd = float(np.std(t_target_arr))
+            mu = float(np.nanmean(t_target_arr))
+            sd = float(np.nanstd(t_target_arr))
             if not np.isfinite(sd) or sd < 1e-8:
                 sd = 1.0
             z_target = (t_target_arr - mu) / sd
             z_aux: dict[str, np.ndarray] = {}
             for v, a in aux_t.items():
-                amu = float(np.mean(a))
-                asd = float(np.std(a))
+                amu = float(np.nanmean(a))
+                asd = float(np.nanstd(a))
                 if not np.isfinite(asd) or asd < 1e-8:
                     asd = 1.0
                 z_aux[v] = (a - amu) / asd
@@ -247,7 +249,7 @@ class PanelLassoTargeted:
                     feat.append(val)
                 # Skip rows with NaN factors
                 
-                if any(not np.isfinite(x) for x in feat[1:]):
+                if any(not np.isfinite(x) for x in feat[1:]) or not np.isfinite(z_target[t_pos]):
                     continue
                 x_rows.append(feat)
                 y_rows.append(float(z_target[t_pos]))
@@ -275,7 +277,7 @@ class PanelLassoTargeted:
             mdl = Lasso(alpha=self.alpha, fit_intercept=False,
                         max_iter=5000).fit(X, y)
         except Exception as e:
-        log.warning(f"Failed fitting Lasso for {target}: {e}")
+            log.warning(f"Failed fitting Lasso for {target}: {e}")
             return
         self._models[target] = {
             "model": mdl, "n_iso": n_iso, "iso_idx": iso_idx,
@@ -292,7 +294,7 @@ class PanelLassoTargeted:
             aux_vars = mdef["aux_vars"]
             factor_cols = mdef["factor_cols"]
             for iso, idx in iso_idx.items():
-                 if iso not in mdef["last"]:
+                if iso not in mdef["last"]:
                     continue
                 state = mdef["last"][iso]
                 tgt_lags = list(state["target_lags"])
@@ -300,8 +302,11 @@ class PanelLassoTargeted:
                 ctx_t = state["ctx_target"]
                 mu, sd = state["mu"], state["sd"]
             
+                offset = cutoff_year - state["last_year"]   # ragged edge
+                if offset > 3:
+                    continue
                 t_steps = []  # z-space; de-standardized below
-                for h in range(1, h_max + 1):
+                for h in range(1, h_max + offset + 1):
                     feat = []
                     onehot = np.zeros(n_iso)
                     onehot[idx] = 1.0
@@ -312,7 +317,7 @@ class PanelLassoTargeted:
                             continue
                         feat.extend(aux_lags[v])
                         
- # 3. Anchor factor PC scores at cutoff_year (safe global reference) instead of ragged last_year
+                    # 3. Anchor factor PC scores at cutoff_year (safe global reference) instead of ragged last_year
                     
                     f_year = cutoff_year
                     skip = False
@@ -327,7 +332,9 @@ class PanelLassoTargeted:
                         feat.append(val)
                     if skip:
                         break
-                    X = np.array(feat).reshape(1, -1)
+                    X = np.array(feat, dtype=float).reshape(1, -1)
+                    if not np.all(np.isfinite(X)):        # missing input at the origin
+                        break
                     t_hat = float(mdl.predict(X)[0])
                     t_steps.append(t_hat)
                     tgt_lags = [t_hat] + tgt_lags[:-1]
@@ -338,9 +345,9 @@ class PanelLassoTargeted:
                 t_steps = [z * sd + mu for z in t_steps]
                 level_steps = _inverse(t_steps, ctx_t, mode=transformation(target))
                 for h in horizons:
-                    if h - 1 >= len(level_steps):
+                    if h - 1 + offset >= len(level_steps):
                         continue
-                    yhat = level_steps[h - 1]
+                    yhat = level_steps[h - 1 + offset]
                     if np.isfinite(yhat):
                         rows.append((iso, cutoff_year + h, target, h, float(yhat),
                                      float("nan"), float("nan")))

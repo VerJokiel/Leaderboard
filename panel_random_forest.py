@@ -44,16 +44,18 @@ from sklearn.ensemble import RandomForestRegressor
 from var_classification import family, transformation
 from transformations import forward as _forward, inverse as _inverse
 from input_registry import resolve_inputs
+import logging
+log = logging.getLogger(__name__)
 
 
 class PanelRandomForest:
-    family = "RandomForest" """indentifiec ML family"""
-    segmentation = "panel_global" """trains on multi-country panel data globally"""
+    family = "RandomForest"          # identifies the ML family
+    segmentation = "panel_global"    # trains on the multi-country panel
     variables = None
     version = "0.2"
     train_window_years = None
 
-   """ dictionary containing all the hyperparameters: lag length, number of trees, tree depth, and training windows"""
+    # Hyperparameters: lag length, number of trees, tree depth, training window
     PARAM_GRID = {
         "L":                  [1, 3],
         "input_mode":         ["curated", "all"],
@@ -89,9 +91,8 @@ class PanelRandomForest:
             f"max_depth={self.max_depth}, min_samples_leaf=5, max_features='sqrt'."
         )
 
-    def _build_features(self, panel: pd.DataFrame, target: str, cutoff_year:int):
-       
-       """Build features up to cutoff_year, respecting train_window_years."""
+    def _build_features(self, panel: pd.DataFrame, target: str, cutoff_year: int):
+        """Build features up to cutoff_year, respecting train_window_years."""
 
         # 1. Prevent data leakage by enforcing cutoff_year
         panel = panel[panel["year"] <= cutoff_year]
@@ -158,12 +159,16 @@ class PanelRandomForest:
            
             for t in range(self.L, len(t_target)):
                 feat = [idx]
+                if not np.all(np.isfinite(t_target[t - self.L: t + 1])):
+                    continue
                 feat.extend(t_target[t - self.L: t][::-1])
                 for v in aux_vars:
                     if v == target:
                         continue
                     feat.extend(aux_t[v][t - self.L: t][::-1])
                 feat.append(int(years[t]))
+                if not np.all(np.isfinite(feat)):
+                    continue
                 rows.append((feat, float(t_target[t])))
 
             per_iso_last[iso] = {
@@ -192,7 +197,7 @@ class PanelRandomForest:
         for target in panel["variable"].unique():
             if family(target) == "skip":
                 continue
-            built = self._build_features(panel, target)
+            built = self._build_features(panel, target, cutoff_year)
             if built is None:
                 continue
             X, y, iso_idx, per_iso_last, aux_vars = built
@@ -208,14 +213,14 @@ class PanelRandomForest:
                     random_state=0,
                 ).fit(X, y)
             except Exception as e:
-               log.warning(f"Failed to fit RandomForest for {target}: {e}")
+                log.warning(f"Failed to fit RandomForest for {target}: {e}")
                 continue
             self._models[target] = {
-                "rf": rf, 
-               "n_iso": len(iso_idx),
-               "iso_idx": iso_idx,
-               "last": per_iso_last, 
-               "aux_vars": aux_vars,
+                "rf": rf,
+                "n_iso": len(iso_idx),
+                "iso_idx": iso_idx,
+                "last": per_iso_last,
+                "aux_vars": aux_vars,
             }
 
     def predict(self, panel: pd.DataFrame, cutoff_year: int, horizons: list[int]) -> pd.DataFrame:
@@ -224,16 +229,19 @@ class PanelRandomForest:
         for target, m in self._models.items():
             tmode = transformation(target)
             for iso, idx in m["iso_idx"].items():
-               if iso not in m["last"]:
-                  continue
+                if iso not in m["last"]:
+                    continue
                 state = m["last"][iso]
                 tgt_lags = list(state["target_lags"])
                 aux_lags = {k: list(v) for k, v in state["aux_lags"].items()}
                 last_year = state["last_year"]
                 ctx = state["ctx"]
                
+                offset = cutoff_year - last_year     # ragged edge
+                if offset > 3:
+                    continue
                 t_steps = []
-                for h in range(1, h_max + 1):
+                for h in range(1, h_max + offset + 1):
                     feat = []
                     onehot = np.zeros(m["n_iso"])
                     onehot[idx] = 1.0
@@ -251,8 +259,9 @@ class PanelRandomForest:
                    
                 lvl = _inverse(t_steps, ctx, mode=tmode)
                 for h in horizons:
-                  if h <= len(lvl):
-                    yhat = lvl[h - 1]
+                    if h + offset > len(lvl):
+                        continue
+                    yhat = lvl[h - 1 + offset]
                     if np.isfinite(yhat):
                         rows.append((iso, cutoff_year + h, target, h, float(yhat),
                                      float("nan"), float("nan")))
