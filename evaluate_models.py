@@ -91,6 +91,7 @@ SPECS = [
     ("pca_country_v2", "PCACountryV3", dict(input_mode="all", K=2, method="iterated"), "Country PCA K=2 all, iterated"),
 ]
 RW = "No-change (random walk)"
+ALL_C, ALL_VARS = "All countries", "All variables (median)"
 COLS = ["ISO3", "year", "variable", "horizon", "point", "lower", "upper"]
 
 
@@ -164,32 +165,44 @@ def add_errors(fc, panel):
     return fc[np.isfinite(fc.error)]
 
 
+def _agg(g):
+    e, r = g.error.to_numpy(), g.rw_error.to_numpy()
+    rmse, rmse_rw = np.sqrt(np.mean(e ** 2)), np.sqrt(np.mean(r ** 2))
+    return pd.Series({"RMSE": rmse, "MAE": np.mean(np.abs(e)), "MAPE": g.ape.median(),
+                      "TheilU": rmse / rmse_rw if rmse_rw > 0 else np.nan,
+                      "DA": g.dir_hit.mean(), "n": len(g)})
+
+
+def _pool_vars(by, keys):
+    """'All variables' rows: units differ, so take the median of per-variable scores."""
+    return (by.groupby(keys)
+              .agg(RMSE=("RMSE", "median"), MAE=("MAE", "median"), MAPE=("MAPE", "median"),
+                   TheilU=("TheilU", "median"), DA=("DA", "mean"), n=("n", "sum"))
+              .reset_index().assign(variable=ALL_VARS))
+
+
 def score(fc):
-    """Five measures per sample x model x variable x horizon (+ 'All variables' rows).
-    Theil U2 and the pooled measures use only cases the random walk also forecasts."""
+    """Five measures per sample x model x country x variable x horizon.
+    ISO3 = 'All countries' pools the errors of every country for that variable.
+    Theil U2 and all measures use only cases the random walk also forecasts."""
     key = ["sample", "ISO3", "variable", "origin", "horizon"]
     rw = fc[fc.model == RW].set_index(key).error.rename("rw_error")
     f = fc.join(rw, on=key).dropna(subset=["rw_error"])
-
-    def agg(g):
-        e, r = g.error.to_numpy(), g.rw_error.to_numpy()
-        rmse, rmse_rw = np.sqrt(np.mean(e ** 2)), np.sqrt(np.mean(r ** 2))
-        return pd.Series({"RMSE": rmse, "MAE": np.mean(np.abs(e)), "MAPE": g.ape.median(),
-                          "TheilU": rmse / rmse_rw if rmse_rw > 0 else np.nan,
-                          "DA": g.dir_hit.mean(), "n": len(g)})
-
-    by = f.groupby(["sample", "model", "variable", "horizon"]).apply(agg, include_groups=False).reset_index()
-    # pooled over variables: units differ, so pool the per-variable scores (median) not errors
-    pooled = (by.groupby(["sample", "model", "horizon"])
-                .agg(RMSE=("RMSE", "median"), MAE=("MAE", "median"), MAPE=("MAPE", "median"),
-                     TheilU=("TheilU", "median"), DA=("DA", "mean"), n=("n", "sum"))
-                .reset_index().assign(variable="All variables (median)"))
-    return pd.concat([by, pooled], ignore_index=True)
+    g = ["sample", "model", "variable", "horizon"]
+    pooled = f.groupby(g).apply(_agg, include_groups=False).reset_index().assign(ISO3=ALL_C)
+    per_c = f.groupby(g + ["ISO3"]).apply(_agg, include_groups=False).reset_index()
+    per_c = per_c[per_c.n >= 3]                              # too few cases to score
+    out = [pooled, per_c,
+           _pool_vars(pooled, ["sample", "model", "horizon"]).assign(ISO3=ALL_C),
+           _pool_vars(per_c, ["sample", "model", "horizon", "ISO3"])]
+    return pd.concat(out, ignore_index=True)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="3 origins per sample (smoke test)")
+    ap.add_argument("--rescore", action="store_true",
+                    help="skip estimation: rescore results/forecasts.csv and rebuild the page")
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     args = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
@@ -201,6 +214,13 @@ def main():
     origins = ins + oos + [CUTOFF]
     print(f"panel: {panel.ISO3.nunique()} countries, {panel.variable.nunique()} variables, "
           f"{panel.year.min()}-{panel.year.max()}; {len(SPECS)} models x {len(origins)} origins")
+
+    if args.rescore:
+        fc = pd.read_csv(os.path.join(OUT, "forecasts.csv"))
+        ins = sorted(fc.loc[fc["sample"] == "In-sample", "origin"].unique())
+        oos = sorted(fc.loc[fc["sample"] == "Out-of-sample", "origin"].unique())
+        log_rows = pd.read_csv(os.path.join(OUT, "model_run_log.csv")).to_dict("records")
+        return finish(fc, panel, ins, oos, log_rows)
 
     parts, log_rows = [], []
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
@@ -223,6 +243,10 @@ def main():
     fc["sample"] = np.where(fc.origin.isin(ins), "In-sample", np.where(fc.origin.isin(oos),
                             "Out-of-sample", "Final forecast"))
     fc.to_csv(os.path.join(OUT, "forecasts.csv"), index=False)
+    finish(fc, panel, ins, oos, log_rows)
+
+
+def finish(fc, panel, ins, oos, log_rows):
     final = fc[fc["sample"] == "Final forecast"]
     final.to_csv(os.path.join(OUT, "final_forecasts.csv"), index=False)
 
@@ -234,9 +258,9 @@ def main():
     meta.to_csv(os.path.join(OUT, "model_run_log.csv"), index=False)
 
     from build_html import build_html
-    build_html(sc, meta, panel, final, os.path.join(OUT, "leaderboard.html"),
+    build_html(sc, meta, panel, final, ev, os.path.join(OUT, "leaderboard.html"),
                ins=ins, oos=oos, sources=SOURCE, tcodes={v: TCODE[transformation(v)] for v in TARGETS})
-    o = sc[(sc["sample"] == "Out-of-sample") & (sc.variable == "All variables (median)") & (sc.horizon == 1)]
+    o = sc[(sc["sample"] == "Out-of-sample") & (sc.variable == ALL_VARS) & (sc.ISO3 == ALL_C) & (sc.horizon == 1)]
     print(o.sort_values("TheilU")[["model", "RMSE", "MAE", "MAPE", "TheilU", "DA", "n"]]
           .round(3).to_string(index=False))
 
