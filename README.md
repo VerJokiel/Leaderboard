@@ -28,7 +28,7 @@ Open `results/leaderboard.html` in a browser.
 Outputs in `results/`: `forecasts.csv`, `forecast_errors.csv`, `scores.csv`, `model_run_log.csv`,
 `final_forecasts.csv`, `leaderboard.html`.
 
-## Notes
+## Notes (11.11.2026)
 
 ### Ad code cleaning
 
@@ -52,14 +52,3 @@ if self.train_window_years is not None:
     min_allowed_year = cutoff_year - self.train_window_years + 1
     panel = panel[panel["year"] >= min_allowed_year]
 ```
-
-## Fixes made to the model files
-
-- Syntax / indentation errors in 5 files; `panel_random_forest (1).py` renamed to `panel_random_forest.py`.
-- `multivar_dfm_v2.py`: estimated on the full panel instead of data ≤ cutoff (look-ahead); called a non-existent `_ar_fit`.
-- `pca_country_v2.py`: `_prepare_series`, `_prepare_aggregates`, `_candidate_list`, `_aggregate_for` were missing (restored from `pca_country_v3.py`).
-- `pca_panel_v2.py`: `_ar_fit`/`_ar_sim` lacked `self`/`@staticmethod`; `tstat_screen` in the grid but not in `__init__`; `col_sd` not stored.
-- `panel_ar_country_fe.py`: column `t` vs `year` mismatch.
-- `panel_ridge_multivar.py`, `panel_random_forest.py`: `cutoff_year` not passed to the feature builder; NaN rows reached the estimator.
-- `panel_lasso_targeted.py`: training window computed but not used; `np.mean` on series with gaps gave all-NaN features.
-- All panel models: a country whose data ended before the cutoff got its forecasts labelled with the wrong year (ragged edge). Forecasts now count steps from the last observation.
