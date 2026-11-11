@@ -31,7 +31,7 @@ Open `(https://verjokiel.github.io/Leaderboard/)` in a browser.
 | Transformations | FRED-MD codes in `support/var_classification.py` (5 = log diff for price, GDP, money, FX; 2 = diff for rates, unemployment, debt; 1 = level for inflation, current account) |
 
 Outputs in `results/`: `forecasts.csv`, `forecast_errors.csv`, `scores.csv`, `model_run_log.csv`,
-`final_forecasts.csv`, `leaderboard.html`.
+`final_forecasts.csv`, `leaderboard.html` (all contained in the branch: claude/evaluation-matrix.
 
 ## Fixes made to the model files
 
