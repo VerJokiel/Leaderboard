@@ -3,6 +3,8 @@
 Leaderboard for chosen models: specifications from the model files in this repo (currently 15 out of 21), evaluated on
 one panel with five error measures and shown in an interactive HTML matrix.
 
+The following models need to be added: damped-trend, country_lasso, and var family models.
+
 ## Run
 
 ```bash
